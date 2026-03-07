@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Call Scanner — Jump Contact</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:'Inter',system-ui,-apple-system,sans-serif;
+    background:#0a0e1a;color:#e2e8f0;min-height:100vh;
+  }
+  body::before{
+    content:'';position:fixed;inset:0;
+    background-image:
+      linear-gradient(rgba(62,165,195,.03) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(62,165,195,.03) 1px,transparent 1px);
+    background-size:50px 50px;z-index:0;pointer-events:none;
+  }
+  .container{max-width:1100px;margin:0 auto;padding:24px 16px;position:relative;z-index:1}
+  h1{font-size:1.5rem;font-weight:700;margin-bottom:4px;color:#fff}
+  h1 span{color:#3ea5c3}
+  .subtitle{color:#8b92a8;font-size:.85rem;margin-bottom:20px}
+  .search-box{display:flex;gap:8px;margin-bottom:16px}
+  #query{
+    flex:1;padding:12px 16px;border-radius:8px;border:1px solid rgba(62,165,195,.25);
+    background:#141824;color:#fff;font-size:1rem;outline:none;
+    transition:border-color .2s;
+  }
+  #query:focus{border-color:#3ea5c3}
+  #query::placeholder{color:#555d70}
+  #searchBtn{
+    padding:12px 24px;border-radius:8px;border:none;
+    background:#bcfd4c;color:#0a0e1a;font-weight:700;font-size:.95rem;
+    cursor:pointer;white-space:nowrap;transition:opacity .2s;
+  }
+  #searchBtn:hover{opacity:.9}
+  #searchBtn:disabled{opacity:.5;cursor:wait}
+  .interpreted{
+    background:#141824;border:1px solid rgba(62,165,195,.15);
+    border-radius:6px;padding:10px 14px;margin-bottom:14px;
+    font-size:.82rem;color:#8b92a8;display:none;
+  }
+  .interpreted strong{color:#3ea5c3}
+  .count{font-size:.82rem;color:#8b92a8;margin-bottom:8px}
+  .count b{color:#3ea5c3}
+  .error{color:#f87171;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:.85rem;display:none}
+  table{width:100%;border-collapse:collapse;font-size:.85rem}
+  thead th{
+    text-align:left;padding:10px 8px;color:#8b92a8;font-weight:600;
+    border-bottom:1px solid rgba(62,165,195,.15);font-size:.78rem;
+    text-transform:uppercase;letter-spacing:.04em;
+  }
+  tbody tr{border-bottom:1px solid rgba(62,165,195,.07);transition:background .15s}
+  tbody tr:hover{background:rgba(62,165,195,.04)}
+  tbody td{padding:8px;vertical-align:middle}
+  .agent{color:#bcfd4c;font-weight:600}
+  .client{color:#e2e8f0}
+  .dir-in{color:#3ea5c3}.dir-out{color:#e63888}
+  .dur{color:#8b92a8;font-variant-numeric:tabular-nums}
+  .time{font-variant-numeric:tabular-nums}
+  .dl-btn{
+    background:transparent;border:1px solid rgba(62,165,195,.3);
+    color:#3ea5c3;padding:4px 10px;border-radius:4px;cursor:pointer;
+    font-size:.78rem;transition:all .2s;white-space:nowrap;
+  }
+  .dl-btn:hover{background:rgba(62,165,195,.12);border-color:#3ea5c3}
+  .dl-btn.loading{opacity:.5;cursor:wait}
+  .dl-all-wrap{display:none;margin-bottom:12px}
+  .dl-all{
+    padding:8px 20px;border-radius:6px;border:none;
+    background:#3ea5c3;color:#fff;font-weight:700;font-size:.85rem;
+    cursor:pointer;transition:opacity .2s;
+  }
+  .dl-all:hover{opacity:.85}
+  .dl-all:disabled{opacity:.5;cursor:wait}
+  .dl-all-status{color:#8b92a8;font-size:.78rem;margin-left:10px}
+  .empty{text-align:center;padding:40px;color:#555d70}
+  .spinner{display:none;text-align:center;padding:30px;color:#8b92a8}
+  .spinner.active{display:block}
+  @media(max-width:700px){
+    .hide-mobile{display:none}
+    table{font-size:.78rem}
+    #query{font-size:.9rem}
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1><span>Call</span> Scanner</h1>
+  <p class="subtitle">Type a natural language query — e.g. "George Tuesday morning" or "last 5 calls"</p>
+
+  <div class="search-box">
+    <input id="query" type="text" placeholder='Try: "Sara yesterday", "outbound this week", "last 10 calls"' autofocus>
+    <button id="searchBtn" onclick="doSearch()">Search</button>
+  </div>
+
+  <div id="interpreted" class="interpreted"></div>
+  <div id="error" class="error"></div>
+  <div id="count" class="count"></div>
+  <div id="spinner" class="spinner">Searching Twilio...</div>
+
+  <div id="dlAllWrap" class="dl-all-wrap">
+    <button class="dl-all" id="dlAllBtn" onclick="downloadAll()">Download All MP3s</button>
+    <span id="dlAllStatus" class="dl-all-status"></span>
+  </div>
+  <div id="results"></div>
+</div>
+
+<script>
+const $q = document.getElementById('query');
+const $btn = document.getElementById('searchBtn');
+const $interp = document.getElementById('interpreted');
+const $err = document.getElementById('error');
+const $count = document.getElementById('count');
+const $spin = document.getElementById('spinner');
+const $results = document.getElementById('results');
+const $dlWrap = document.getElementById('dlAllWrap');
+const $dlBtn = document.getElementById('dlAllBtn');
+const $dlStatus = document.getElementById('dlAllStatus');
+let lastResults = [];
+
+$q.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+async function doSearch() {
+  const q = $q.value.trim();
+  if (!q) return;
+
+  $btn.disabled = true;
+  $interp.style.display = 'none';
+  $err.style.display = 'none';
+  $count.innerHTML = '';
+  $results.innerHTML = '';
+  $dlWrap.style.display = 'none';
+  $dlStatus.textContent = '';
+  lastResults = [];
+  $spin.classList.add('active');
+
+  try {
+    const resp = await fetch('/api/search?q=' + encodeURIComponent(q));
+    const data = await resp.json();
+
+    if (data.error) {
+      $err.textContent = data.error;
+      $err.style.display = 'block';
+      return;
+    }
+
+    if (data.interpreted) {
+      $interp.innerHTML = '<strong>Interpreted:</strong> ' + esc(data.interpreted);
+      $interp.style.display = 'block';
+    }
+
+    $count.innerHTML = '<b>' + data.count + '</b> call' + (data.count !== 1 ? 's' : '') + ' found';
+
+    if (!data.results.length) {
+      $results.innerHTML = '<div class="empty">No calls matched your query.</div>';
+      return;
+    }
+
+    let html = '<table><thead><tr>'
+      + '<th>Date</th><th>Time</th><th>Agent</th><th>Client</th>'
+      + '<th>Dir</th><th>Duration</th><th class="hide-mobile">From</th>'
+      + '<th></th></tr></thead><tbody>';
+
+    for (const r of data.results) {
+      const dirCls = r.direction === 'inbound' ? 'dir-in' : 'dir-out';
+      const dirLabel = r.direction === 'inbound' ? 'IN' : r.direction === 'outbound' ? 'OUT' : r.direction;
+      html += '<tr>'
+        + '<td class="time">' + esc(r.date) + '</td>'
+        + '<td class="time">' + esc(r.time) + '</td>'
+        + '<td class="agent">' + esc(cap(r.agent)) + '</td>'
+        + '<td class="client">' + esc(r.client) + '</td>'
+        + '<td class="' + dirCls + '">' + dirLabel + '</td>'
+        + '<td class="dur">' + esc(r.duration) + '</td>'
+        + '<td class="hide-mobile" style="color:#8b92a8;font-size:.78rem">' + esc(r.phone_from) + '</td>'
+        + '<td>' + dlBtn(r) + '</td>'
+        + '</tr>';
+    }
+    html += '</tbody></table>';
+    $results.innerHTML = html;
+    lastResults = data.results;
+    const withRec = data.results.filter(r => r.call_sid).length;
+    if (withRec > 1) {
+      $dlBtn.textContent = 'Download All ' + withRec + ' MP3s';
+      $dlWrap.style.display = 'block';
+    }
+
+  } catch (e) {
+    $err.textContent = 'Request failed: ' + e.message;
+    $err.style.display = 'block';
+  } finally {
+    $btn.disabled = false;
+    $spin.classList.remove('active');
+  }
+}
+
+function dlBtn(r) {
+  if (!r.call_sid) return '';
+  const url = '/api/recording/' + r.call_sid + (r.agent_sid ? '?agent_sid=' + r.agent_sid : '');
+  return '<button class="dl-btn" onclick="dlRec(this,\'' + url + '\')">MP3</button>';
+}
+
+async function downloadAll() {
+  const calls = lastResults.filter(r => r.call_sid).map(r => ({
+    call_sid: r.call_sid,
+    agent_sid: r.agent_sid || '',
+    label: (r.agent || 'unknown') + '_' + r.date + '_' + (r.time || '').replace(':','') + '_' + (r.direction === 'inbound' ? 'in' : 'out')
+  }));
+  if (!calls.length) return;
+  $dlBtn.disabled = true;
+  $dlStatus.textContent = 'Fetching ' + calls.length + ' recordings...';
+  try {
+    const resp = await fetch('/api/download-all', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({calls})
+    });
+    if (!resp.ok) { $dlStatus.textContent = 'Failed: ' + resp.statusText; return; }
+    const blob = await resp.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'recordings.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(a.href);
+    $dlStatus.textContent = 'Done!';
+  } catch(e) {
+    $dlStatus.textContent = 'Error: ' + e.message;
+  } finally {
+    $dlBtn.disabled = false;
+  }
+}
+
+function dlRec(btn, url) {
+  btn.classList.add('loading');
+  btn.textContent = '...';
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => { btn.classList.remove('loading'); btn.textContent = 'MP3'; }, 2000);
+}
+
+function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
+</script>
+</body>
+</html>

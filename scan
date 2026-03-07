@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Call Scanner — run from anywhere
+# Usage: scan "George Tuesday morning"
+#        scan --list "last 5 calls"
+#        scan --csv ~/Desktop/calls.csv "Sara yesterday"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+python main.py "$@"
