@@ -1,6 +1,7 @@
 """Web UI for Call Scanner — query Twilio calls with natural language."""
 
 import io
+import json
 import os
 import sys
 import zipfile
@@ -22,6 +23,25 @@ from src.twilio_client import TwilioClient
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 app = Flask(__name__, static_folder="static")
+
+# Load client phone → name mapping
+_clients_path = os.path.join(os.path.dirname(__file__), "clients.json")
+_client_map: dict[str, str] = {}
+_client_aliases: dict[str, str | list] = {}
+if os.path.exists(_clients_path):
+    with open(_clients_path) as f:
+        _cdata = json.load(f)
+    _client_map = _cdata.get("clients", {})
+    _client_aliases = _cdata.get("aliases", {})
+
+
+def resolve_client(phone_to: str, phone_from: str = "") -> str:
+    """Resolve a phone number to a client name using the mapping."""
+    if phone_to and phone_to in _client_map:
+        return _client_map[phone_to]
+    if phone_from and phone_from in _client_map:
+        return _client_map[phone_from]
+    return phone_to or phone_from or ""
 
 # Lazy-init Twilio client (fails fast if creds missing)
 _twilio: TwilioClient | None = None
@@ -91,18 +111,21 @@ def search():
     for r in records:
         dur = r.get("duration", 0) or 0
         ts = r.get("timestamp", "")
+        phone_from = r.get("phone_from", "")
+        phone_to = r.get("phone_to", "")
+        client_name = resolve_client(phone_to, phone_from)
         results.append(
             {
                 "agent": r.get("agent_name", "") or "Unknown",
-                "client": r.get("contact_name", ""),
+                "client": client_name,
                 "timestamp": ts[:19] if len(ts) >= 19 else ts,
                 "date": ts[:10] if len(ts) >= 10 else "",
                 "time": ts[11:16] if len(ts) >= 16 else "",
                 "direction": r.get("direction", ""),
                 "duration": f"{dur // 60}:{dur % 60:02d}" if dur else "-",
                 "duration_sec": dur,
-                "phone_from": r.get("phone_from", ""),
-                "phone_to": r.get("phone_to", ""),
+                "phone_from": phone_from,
+                "phone_to": phone_to,
                 "call_sid": r.get("call_sid", ""),
                 "agent_sid": r.get("agent_sid", ""),
             }
@@ -157,6 +180,13 @@ def recording(call_sid: str):
             "Content-Disposition": f"attachment; filename={rec_sid}.mp3",
         },
     )
+
+
+@app.route("/api/clients")
+def clients():
+    """Return client list for autocomplete / dropdown."""
+    names = sorted(set(_client_map.values()))
+    return jsonify({"clients": names, "count": len(names)})
 
 
 @app.route("/api/download-all", methods=["POST"])
