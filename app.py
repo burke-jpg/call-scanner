@@ -268,6 +268,56 @@ def refresh_agents():
     })
 
 
+@app.route("/api/debug-legs")
+def debug_legs():
+    """Temporary diagnostic: show raw call leg data to diagnose agent detection."""
+    try:
+        twilio = get_twilio()
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 500
+
+    today = local_today().isoformat()
+    raw = twilio.get_calls(date_from=today, date_to=today)
+
+    # Categorize legs
+    client_legs = []
+    inbound_legs = []
+    outbound_api_legs = []
+    other_legs = []
+
+    for c in raw:
+        to = c.get("to", "")
+        direction = c.get("direction", "")
+        summary = {
+            "sid": c["sid"][:12] + "...",
+            "to": to,
+            "from_": c.get("from_", ""),
+            "direction": direction,
+            "duration": c.get("duration", 0),
+            "status": c.get("status", ""),
+        }
+        if "client:" in to.lower():
+            client_legs.append(summary)
+        elif direction == "inbound":
+            inbound_legs.append(summary)
+        elif direction == "outbound-api":
+            outbound_api_legs.append(summary)
+        else:
+            other_legs.append(summary)
+
+    return jsonify({
+        "total_legs": len(raw),
+        "client_legs": len(client_legs),
+        "inbound_legs": len(inbound_legs),
+        "outbound_api_legs": len(outbound_api_legs),
+        "other_legs": len(other_legs),
+        "sample_client": client_legs[:5],
+        "sample_inbound": inbound_legs[:5],
+        "sample_outbound_api": outbound_api_legs[:5],
+        "sample_other": other_legs[:5],
+    })
+
+
 @app.route("/api/health")
 def health():
     """Diagnostic: check Twilio connectivity and env vars."""
