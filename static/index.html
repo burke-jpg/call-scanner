@@ -87,6 +87,25 @@
   .refresh-btn:hover{background:rgba(62,165,195,.12);border-color:#3ea5c3}
   .refresh-btn:disabled{opacity:.5;cursor:wait}
   .refresh-status{color:#8b92a8;font-size:.75rem;margin-right:8px}
+  .quick-filters{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .qf{
+    padding:6px 14px;border-radius:6px;border:1px solid rgba(62,165,195,.2);
+    background:#141824;color:#8b92a8;font-size:.78rem;font-weight:600;
+    cursor:pointer;transition:all .15s;white-space:nowrap;
+  }
+  .qf:hover{background:rgba(62,165,195,.1);color:#3ea5c3;border-color:rgba(62,165,195,.4)}
+  .qf.active{background:rgba(62,165,195,.15);color:#3ea5c3;border-color:#3ea5c3}
+  .chip-section{margin-bottom:10px}
+  .chip-label{font-size:.72rem;color:#555d70;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;font-weight:600}
+  .chip-row{display:flex;flex-wrap:wrap;gap:4px}
+  .chip{
+    padding:4px 10px;border-radius:4px;border:1px solid rgba(188,253,76,.12);
+    background:rgba(188,253,76,.05);color:#bcfd4c;font-size:.72rem;font-weight:600;
+    cursor:pointer;transition:all .15s;text-transform:capitalize;
+  }
+  .chip:hover{background:rgba(188,253,76,.12);border-color:rgba(188,253,76,.3)}
+  .chip-client{border-color:rgba(226,232,240,.12);background:rgba(226,232,240,.03);color:#e2e8f0}
+  .chip-client:hover{background:rgba(226,232,240,.08);border-color:rgba(226,232,240,.2)}
   .empty{text-align:center;padding:40px;color:#555d70}
   .spinner{display:none;text-align:center;padding:30px;color:#8b92a8}
   .spinner.active{display:block}
@@ -113,6 +132,24 @@
   <div class="search-box">
     <input id="query" type="text" placeholder='Try: "Sara yesterday", "outbound this week", "last 10 calls"' autofocus>
     <button id="searchBtn" onclick="doSearch()">Search</button>
+  </div>
+
+  <div class="quick-filters">
+    <button class="qf" onclick="qf('today')">Today</button>
+    <button class="qf" onclick="qf('yesterday')">Yesterday</button>
+    <button class="qf" onclick="qf('this week')">This Week</button>
+    <button class="qf" onclick="qf('last 10 calls')">Last 10</button>
+    <button class="qf" onclick="qf('last 20 calls')">Last 20</button>
+    <button class="qf" onclick="qf('inbound today')">Inbound</button>
+    <button class="qf" onclick="qf('outbound today')">Outbound</button>
+  </div>
+  <div class="chip-section" id="agentChips">
+    <div class="chip-label">Agents</div>
+    <div class="chip-row" id="agentRow"></div>
+  </div>
+  <div class="chip-section" id="clientChips" style="display:none">
+    <div class="chip-label">Clients</div>
+    <div class="chip-row" id="clientRow"></div>
   </div>
 
   <div id="interpreted" class="interpreted"></div>
@@ -282,6 +319,35 @@ async function refreshAgents() {
     btn.disabled = false;
   }
 }
+
+function qf(query) { $q.value = query; doSearch(); }
+
+function agentClick(name) { $q.value = name + ' today'; doSearch(); }
+function clientClick(name) { $q.value = name + ' today'; doSearch(); }
+
+async function loadChips() {
+  try {
+    const [agResp, clResp] = await Promise.all([
+      fetch('/api/agents'), fetch('/api/clients')
+    ]);
+    const agData = await agResp.json();
+    const clData = await clResp.json();
+    const agRow = document.getElementById('agentRow');
+    if (agData.agents && agData.agents.length) {
+      agRow.innerHTML = agData.agents.map(a =>
+        '<button class="chip" onclick="agentClick(\'' + esc(a) + '\')">' + esc(cap(a)) + '</button>'
+      ).join('');
+    }
+    const clRow = document.getElementById('clientRow');
+    if (clData.clients && clData.clients.length) {
+      clRow.innerHTML = clData.clients.map(c =>
+        '<button class="chip chip-client" onclick="clientClick(\'' + esc(c).replace(/'/g,"\\&apos;") + '\')">' + esc(c) + '</button>'
+      ).join('');
+      document.getElementById('clientChips').style.display = '';
+    }
+  } catch(e) { /* silent — chips are optional */ }
+}
+loadChips();
 
 function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
