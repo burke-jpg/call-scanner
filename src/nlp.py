@@ -22,6 +22,10 @@ STOPWORDS = frozenset({
     "calls", "call", "recordings", "recording", "from", "the", "a", "an",
     "with", "by", "give", "me", "get", "show", "all", "my", "of", "for",
     "on", "at", "to", "and", "in", "out",
+    # Duration-related stopwords
+    "longer", "shorter", "than", "over", "under", "less", "more",
+    "between", "minutes", "minute", "min", "mins", "seconds", "second",
+    "sec", "secs", "hours", "hour", "hr", "hrs", "duration", "lasting",
 })
 
 # Default known agents (overridable via KNOWN_AGENTS env var)
@@ -69,6 +73,8 @@ class ParsedQuery:
     direction: str | None = None     # inbound / outbound
     limit: int | None = None         # Max results
     limit_from: str = "tail"         # "tail" (last N) or "head" (first N)
+    duration_min: int | None = None  # Minimum duration in seconds
+    duration_max: int | None = None  # Maximum duration in seconds
     raw_query: str = ""
 
     def has_filters(self) -> bool:
@@ -76,7 +82,7 @@ class ParsedQuery:
         return any([
             self.agent, self.date, self.date_from, self.date_to,
             self.time_from, self.time_to, self.client, self.phone,
-            self.direction,
+            self.direction, self.duration_min, self.duration_max,
         ])
 
     def summary(self) -> str:
@@ -104,6 +110,10 @@ class ParsedQuery:
             parts.append(f"phone={self.phone}")
         if self.direction:
             parts.append(f"dir={self.direction}")
+        if self.duration_min is not None:
+            parts.append(f"duration>={self.duration_min}s")
+        if self.duration_max is not None:
+            parts.append(f"duration<={self.duration_max}s")
         if self.limit:
             parts.append(f"{self.limit_from} {self.limit}")
         return ", ".join(parts) if parts else "no filters"
@@ -148,6 +158,112 @@ def _previous_week_weekday(target_weekday: int, ref: date) -> date:
         return ref - timedelta(days=7)
     # If most_recent is in the current week, go back 7
     return most_recent - timedelta(days=7)
+
+
+def _parse_duration_value(tokens: list[str], start: int, consumed: set) -> int | None:
+    """Extract a numeric duration value in seconds from tokens starting at index.
+
+    Looks for patterns like "5 minutes", "30 sec", "2 hours", or bare "5" (defaults to minutes).
+    Returns seconds or None if no number found.
+    """
+    # Find the next unconsumed numeric token at or after start
+    for idx in range(start, len(tokens)):
+        if idx in consumed:
+            continue
+        tok = tokens[idx]
+        if not tok.replace(".", "", 1).isdigit():
+            continue
+
+        value = float(tok)
+        consumed.add(idx)
+
+        # Check the next token for a unit
+        unit_idx = idx + 1
+        if unit_idx < len(tokens) and unit_idx not in consumed:
+            unit = tokens[unit_idx]
+            if unit in ("hours", "hour", "hr", "hrs", "h"):
+                consumed.add(unit_idx)
+                return int(value * 3600)
+            elif unit in ("minutes", "minute", "min", "mins", "m"):
+                consumed.add(unit_idx)
+                return int(value * 60)
+            elif unit in ("seconds", "second", "sec", "secs", "s"):
+                consumed.add(unit_idx)
+                return int(value)
+
+        # No unit → default to minutes
+        return int(value * 60)
+
+    return None
+
+
+def _parse_duration(tokens: list[str], consumed: set, result: "ParsedQuery") -> None:
+    """Parse duration filter patterns from tokens.
+
+    Supported patterns:
+      - "longer than 5 minutes" / "over 5 min" / "more than 30 sec"  → duration_min
+      - "shorter than 5 minutes" / "under 2 min" / "less than 10 min" → duration_max
+      - "between 1 and 5 minutes" → duration_min + duration_max
+      - "lasting 5 minutes" → exact (sets both min and max)
+    """
+    text = " ".join(t for i, t in enumerate(tokens) if i not in consumed)
+
+    for i, tok in enumerate(tokens):
+        if i in consumed:
+            continue
+
+        # "between X and Y minutes"
+        if tok == "between":
+            val1 = _parse_duration_value(tokens, i + 1, consumed)
+            if val1 is not None:
+                # Look for "and" then second value
+                for j in range(i + 1, min(i + 6, len(tokens))):
+                    if j not in consumed and tokens[j] == "and":
+                        consumed.add(j)
+                        val2 = _parse_duration_value(tokens, j + 1, consumed)
+                        if val2 is not None:
+                            result.duration_min = min(val1, val2)
+                            result.duration_max = max(val1, val2)
+                            consumed.add(i)
+                            return
+            continue
+
+        # "longer/more/over than X" → minimum
+        if tok in ("longer", "more", "over"):
+            consumed.add(i)
+            # Skip "than" if present
+            next_i = i + 1
+            if next_i < len(tokens) and tokens[next_i] == "than":
+                consumed.add(next_i)
+                next_i += 1
+            val = _parse_duration_value(tokens, next_i, consumed)
+            if val is not None:
+                result.duration_min = val
+                return
+            continue
+
+        # "shorter/less/under than X" → maximum
+        if tok in ("shorter", "less", "under"):
+            consumed.add(i)
+            next_i = i + 1
+            if next_i < len(tokens) and tokens[next_i] == "than":
+                consumed.add(next_i)
+                next_i += 1
+            val = _parse_duration_value(tokens, next_i, consumed)
+            if val is not None:
+                result.duration_max = val
+                return
+            continue
+
+        # "lasting X minutes" → exact match (min = max)
+        if tok in ("lasting", "duration"):
+            consumed.add(i)
+            val = _parse_duration_value(tokens, i + 1, consumed)
+            if val is not None:
+                result.duration_min = val
+                result.duration_max = val
+                return
+            continue
 
 
 def parse_query(text: str, reference_date: date | None = None) -> ParsedQuery:
@@ -280,7 +396,10 @@ def parse_query(text: str, reference_date: date | None = None) -> ParsedQuery:
             consumed.add(i)
             break
 
-    # --- Pass 7: Remainder → client ---
+    # --- Pass 7: Duration filters ---
+    _parse_duration(tokens, consumed, result)
+
+    # --- Pass 8: Remainder → client ---
     remainder = []
     for i, tok in enumerate(tokens):
         if i in consumed:

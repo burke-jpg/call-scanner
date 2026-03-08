@@ -113,6 +113,35 @@ def matches_direction(record: dict, direction_filter: str | None) -> bool:
     return record.get("direction", "").lower() == direction_filter.lower()
 
 
+def matches_duration(
+    record: dict,
+    duration_min: int | None = None,
+    duration_max: int | None = None,
+) -> bool:
+    """Check if a call's duration falls within the specified range.
+
+    Args:
+        record: Call record with 'duration' field (seconds).
+        duration_min: Minimum duration in seconds (inclusive).
+        duration_max: Maximum duration in seconds (inclusive).
+    """
+    if duration_min is None and duration_max is None:
+        return True
+
+    duration = record.get("duration", 0)
+    if not isinstance(duration, (int, float)):
+        try:
+            duration = int(duration)
+        except (ValueError, TypeError):
+            return False
+
+    if duration_min is not None and duration < duration_min:
+        return False
+    if duration_max is not None and duration > duration_max:
+        return False
+    return True
+
+
 def matches_phone(record: dict, phone_filter: str | None) -> bool:
     """Match on phone_from or phone_to (partial, digits only)."""
     if not phone_filter:
@@ -135,6 +164,8 @@ def apply_filters(
     client: str | None = None,
     phone: str | None = None,
     direction: str | None = None,
+    duration_min: int | None = None,
+    duration_max: int | None = None,
 ) -> list[dict]:
     """Apply all filters to a list of call records.
 
@@ -154,6 +185,8 @@ def apply_filters(
         if not matches_phone(record, phone):
             continue
         if not matches_direction(record, direction):
+            continue
+        if not matches_duration(record, duration_min, duration_max):
             continue
         filtered.append(record)
 

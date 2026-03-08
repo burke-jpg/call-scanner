@@ -418,6 +418,7 @@ def _build_record(
                 inbound_leg.get("duration", 0),
                 agent_leg.get("duration", 0),
             ),
+            "status": inbound_leg.get("status", ""),
         }
     elif agent_leg:
         # Agent leg only (unmatched)
@@ -431,6 +432,7 @@ def _build_record(
             "phone_from": agent_leg.get("from_", ""),
             "phone_to": "",
             "duration": agent_leg.get("duration", 0),
+            "status": agent_leg.get("status", ""),
         }
     elif inbound_leg:
         # Inbound only (unanswered / IVR)
@@ -444,6 +446,7 @@ def _build_record(
             "phone_from": inbound_leg.get("from_", ""),
             "phone_to": inbound_leg.get("to", ""),
             "duration": inbound_leg.get("duration", 0),
+            "status": inbound_leg.get("status", ""),
         }
     else:
         return {
@@ -456,4 +459,5 @@ def _build_record(
             "phone_from": "",
             "phone_to": "",
             "duration": 0,
+            "status": "",
         }
