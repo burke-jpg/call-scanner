@@ -25,7 +25,10 @@ STOPWORDS = frozenset({
 })
 
 # Default known agents (overridable via KNOWN_AGENTS env var)
-DEFAULT_AGENTS = "george,sara,omar,danny,ian,chris,burke,william"
+DEFAULT_AGENTS = (
+    "george,sara,omar,danny,ian,chris,burke,william,"
+    "desi,anthony,joseph,francis,sue,richard,rebecca"
+)
 
 # Day-of-week name → weekday number (Monday=0)
 WEEKDAY_MAP = {

@@ -11,7 +11,8 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 # Ensure src/ is importable
 sys.path.insert(0, os.path.dirname(__file__))
 
-from datetime import date
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import requests as http_requests
 from dotenv import load_dotenv
@@ -47,6 +48,15 @@ def resolve_client(phone_to: str, phone_from: str = "") -> str:
     return phone_to or phone_from or ""
 
 
+# Timezone for resolving "today" / "yesterday" (Vercel runs UTC)
+LOCAL_TZ = ZoneInfo(os.getenv("TIMEZONE", "America/Tegucigalpa"))
+
+
+def local_today() -> date:
+    """Return today's date in the local timezone (not UTC)."""
+    return datetime.now(LOCAL_TZ).date()
+
+
 def resolve_brand(phone_to: str, phone_from: str = "") -> str:
     """Resolve a phone number to a brand ('jc' or 'msc')."""
     if phone_to and phone_to in _brand_map:
@@ -77,15 +87,16 @@ def search():
     if not q:
         return jsonify({"error": "Query is required", "results": [], "count": 0}), 400
 
-    parsed = parse_query(q, date.today())
+    today = local_today()
+    parsed = parse_query(q, today)
 
     # Determine date range for Twilio
     query_from = parsed.date or parsed.date_from
     query_to = parsed.date or parsed.date_to or query_from
 
-    # Default to today if no date extracted
+    # Default to today (local timezone) if no date extracted
     if not query_from:
-        query_from = date.today().isoformat()
+        query_from = today.isoformat()
         query_to = query_from
 
     try:
@@ -93,9 +104,31 @@ def search():
     except ValueError as e:
         return jsonify({"error": str(e), "results": [], "count": 0}), 500
 
-    # Query Twilio
-    raw = twilio.get_calls(date_from=query_from, date_to=query_to)
+    # Widen Twilio query by 1 day to catch UTC/local timezone overlap.
+    # Example: March 7 18:00 CST = March 8 00:00 UTC — we need both days.
+    twilio_from = (date.fromisoformat(query_from) - timedelta(days=1)).isoformat()
+    twilio_to = (date.fromisoformat(query_to) + timedelta(days=1)).isoformat()
+    raw = twilio.get_calls(date_from=twilio_from, date_to=twilio_to)
     records = twilio.pair_call_legs(raw)
+
+    # Convert UTC timestamps to local timezone so date/time filters match user intent
+    for r in records:
+        ts = r.get("timestamp", "")
+        if ts:
+            try:
+                utc_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                local_dt = utc_dt.astimezone(LOCAL_TZ)
+                r["timestamp"] = local_dt.isoformat()
+            except (ValueError, AttributeError):
+                pass
+
+    # Enrich contact_name with resolved client names before filtering
+    for r in records:
+        phone_from = r.get("phone_from", "")
+        phone_to = r.get("phone_to", "")
+        resolved = resolve_client(phone_to, phone_from)
+        if resolved and resolved != phone_to and resolved != phone_from:
+            r["contact_name"] = resolved
 
     # Apply filters
     records = apply_filters(
@@ -246,7 +279,9 @@ def health():
     info = {
         "sid_set": bool(sid),
         "token_set": bool(tok),
-        "server_date": date.today().isoformat(),
+        "server_date_utc": date.today().isoformat(),
+        "local_date": local_today().isoformat(),
+        "timezone": str(LOCAL_TZ),
     }
     try:
         twilio = get_twilio()
