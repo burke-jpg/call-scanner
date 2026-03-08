@@ -16,6 +16,7 @@ from datetime import date
 import requests as http_requests
 from dotenv import load_dotenv
 
+from src.agents import discover_agents, load_agents, save_agents
 from src.filters import apply_filters
 from src.nlp import parse_query
 from src.twilio_client import TwilioClient
@@ -28,11 +29,13 @@ app = Flask(__name__, static_folder="static")
 _clients_path = os.path.join(os.path.dirname(__file__), "clients.json")
 _client_map: dict[str, str] = {}
 _client_aliases: dict[str, str | list] = {}
+_brand_map: dict[str, str] = {}
 if os.path.exists(_clients_path):
     with open(_clients_path) as f:
         _cdata = json.load(f)
     _client_map = _cdata.get("clients", {})
     _client_aliases = _cdata.get("aliases", {})
+    _brand_map: dict[str, str] = _cdata.get("brands", {})
 
 
 def resolve_client(phone_to: str, phone_from: str = "") -> str:
@@ -42,6 +45,15 @@ def resolve_client(phone_to: str, phone_from: str = "") -> str:
     if phone_from and phone_from in _client_map:
         return _client_map[phone_from]
     return phone_to or phone_from or ""
+
+
+def resolve_brand(phone_to: str, phone_from: str = "") -> str:
+    """Resolve a phone number to a brand ('jc' or 'msc')."""
+    if phone_to and phone_to in _brand_map:
+        return _brand_map[phone_to]
+    if phone_from and phone_from in _brand_map:
+        return _brand_map[phone_from]
+    return "jc"
 
 # Lazy-init Twilio client (fails fast if creds missing)
 _twilio: TwilioClient | None = None
@@ -114,10 +126,12 @@ def search():
         phone_from = r.get("phone_from", "")
         phone_to = r.get("phone_to", "")
         client_name = resolve_client(phone_to, phone_from)
+        brand = resolve_brand(phone_to, phone_from)
         results.append(
             {
                 "agent": r.get("agent_name", "") or "Unknown",
                 "client": client_name,
+                "brand": brand,
                 "timestamp": ts[:19] if len(ts) >= 19 else ts,
                 "date": ts[:10] if len(ts) >= 10 else "",
                 "time": ts[11:16] if len(ts) >= 16 else "",
@@ -187,6 +201,38 @@ def clients():
     """Return client list for autocomplete / dropdown."""
     names = sorted(set(_client_map.values()))
     return jsonify({"clients": names, "count": len(names)})
+
+
+@app.route("/api/agents")
+def agents():
+    """Return current agent list (from cache or defaults)."""
+    cached = load_agents()
+    if cached:
+        return jsonify({"agents": cached, "count": len(cached), "source": "cache"})
+    # Fallback to defaults
+    from src.nlp import get_known_agents
+    defaults = get_known_agents()
+    return jsonify({"agents": defaults, "count": len(defaults), "source": "defaults"})
+
+
+@app.route("/api/refresh-agents", methods=["POST"])
+def refresh_agents():
+    """Scan Twilio for all agent names and update cache."""
+    try:
+        twilio = get_twilio()
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 500
+
+    data = request.get_json(silent=True) or {}
+    days = int(data.get("days", 14))
+
+    discovered = discover_agents(twilio, days=days)
+    save_agents(discovered)
+    return jsonify({
+        "agents": discovered,
+        "count": len(discovered),
+        "days_scanned": days,
+    })
 
 
 @app.route("/api/download-all", methods=["POST"])

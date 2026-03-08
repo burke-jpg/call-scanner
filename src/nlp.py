@@ -107,9 +107,26 @@ class ParsedQuery:
 
 
 def get_known_agents() -> list[str]:
-    """Load known agent names from env or defaults."""
-    raw = os.getenv("KNOWN_AGENTS", DEFAULT_AGENTS)
-    return [a.strip().lower() for a in raw.split(",") if a.strip()]
+    """Load known agent names (3-tier fallback).
+
+    Priority:
+      1. KNOWN_AGENTS env var (explicit override)
+      2. agents.json cache (auto-discovered)
+      3. DEFAULT_AGENTS hardcoded list (always works)
+    """
+    # Tier 1: env var override
+    env_val = os.getenv("KNOWN_AGENTS")
+    if env_val:
+        return [a.strip().lower() for a in env_val.split(",") if a.strip()]
+
+    # Tier 2: agents.json cache
+    from .agents import load_agents
+    cached = load_agents()
+    if cached:
+        return [a.lower() for a in cached]
+
+    # Tier 3: hardcoded fallback
+    return [a.strip().lower() for a in DEFAULT_AGENTS.split(",") if a.strip()]
 
 
 def _most_recent_weekday(target_weekday: int, ref: date) -> date:

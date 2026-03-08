@@ -75,6 +75,18 @@
   .dl-all:hover{opacity:.85}
   .dl-all:disabled{opacity:.5;cursor:wait}
   .dl-all-status{color:#8b92a8;font-size:.78rem;margin-left:10px}
+  .brand{font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:3px;text-transform:uppercase;letter-spacing:.05em}
+  .brand-jc{background:rgba(62,165,195,.15);color:#3ea5c3}
+  .brand-msc{background:rgba(230,56,136,.15);color:#e63888}
+  .header-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+  .refresh-btn{
+    background:transparent;border:1px solid rgba(62,165,195,.3);color:#3ea5c3;
+    padding:6px 14px;border-radius:6px;cursor:pointer;font-size:.78rem;
+    font-weight:600;transition:all .2s;
+  }
+  .refresh-btn:hover{background:rgba(62,165,195,.12);border-color:#3ea5c3}
+  .refresh-btn:disabled{opacity:.5;cursor:wait}
+  .refresh-status{color:#8b92a8;font-size:.75rem;margin-right:8px}
   .empty{text-align:center;padding:40px;color:#555d70}
   .spinner{display:none;text-align:center;padding:30px;color:#8b92a8}
   .spinner.active{display:block}
@@ -87,8 +99,16 @@
 </head>
 <body>
 <div class="container">
-  <h1><span>Call</span> Scanner</h1>
-  <p class="subtitle">Type a natural language query — e.g. "George Tuesday morning" or "last 5 calls"</p>
+  <div class="header-row">
+    <div>
+      <h1><span>Call</span> Scanner</h1>
+      <p class="subtitle">Type a natural language query — e.g. "George Tuesday morning" or "last 5 calls"</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span id="refreshStatus" class="refresh-status"></span>
+      <button class="refresh-btn" id="refreshBtn" onclick="refreshAgents()">Refresh Agents</button>
+    </div>
+  </div>
 
   <div class="search-box">
     <input id="query" type="text" placeholder='Try: "Sara yesterday", "outbound this week", "last 10 calls"' autofocus>
@@ -160,6 +180,7 @@ async function doSearch() {
 
     let html = '<table><thead><tr>'
       + '<th>Date</th><th>Time</th><th>Agent</th><th>Client</th>'
+      + '<th class="hide-mobile">Brand</th>'
       + '<th>Dir</th><th>Duration</th><th class="hide-mobile">From</th>'
       + '<th></th></tr></thead><tbody>';
 
@@ -171,6 +192,7 @@ async function doSearch() {
         + '<td class="time">' + esc(r.time) + '</td>'
         + '<td class="agent">' + esc(cap(r.agent)) + '</td>'
         + '<td class="client">' + esc(r.client) + '</td>'
+        + '<td class="hide-mobile"><span class="brand brand-' + (r.brand || 'jc') + '">' + (r.brand || 'jc').toUpperCase() + '</span></td>'
         + '<td class="' + dirCls + '">' + dirLabel + '</td>'
         + '<td class="dur">' + esc(r.duration) + '</td>'
         + '<td class="hide-mobile" style="color:#8b92a8;font-size:.78rem">' + esc(r.phone_from) + '</td>'
@@ -241,6 +263,24 @@ function dlRec(btn, url) {
   a.click();
   a.remove();
   setTimeout(() => { btn.classList.remove('loading'); btn.textContent = 'MP3'; }, 2000);
+}
+
+async function refreshAgents() {
+  const btn = document.getElementById('refreshBtn');
+  const status = document.getElementById('refreshStatus');
+  btn.disabled = true;
+  status.textContent = 'Scanning...';
+  try {
+    const resp = await fetch('/api/refresh-agents', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({days: 14})});
+    const data = await resp.json();
+    if (data.error) { status.textContent = 'Error: ' + data.error; return; }
+    status.textContent = data.count + ' agents found';
+    setTimeout(() => { status.textContent = ''; }, 5000);
+  } catch(e) {
+    status.textContent = 'Failed: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }

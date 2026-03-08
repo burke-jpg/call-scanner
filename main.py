@@ -20,6 +20,7 @@ import click
 from dotenv import load_dotenv
 from tabulate import tabulate
 
+from src.agents import discover_agents, save_agents
 from src.filters import apply_filters
 from src.index import add_entry, load_index, save_index
 from src.naming import build_filename
@@ -54,6 +55,8 @@ logger = logging.getLogger("twilio-recordings")
 @click.option("--list", "list_only", is_flag=True, help="Print results as table, don't download")
 @click.option("--csv", "csv_path", default=None, help="Export results to CSV file")
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging")
+@click.option("--refresh-agents", is_flag=True, help="Scan Twilio to discover all agents, save to agents.json, then exit")
+@click.option("--days", default=14, help="Days to look back when refreshing agents (default: 14)")
 def main(
     query,
     single_date,
@@ -70,6 +73,8 @@ def main(
     list_only,
     csv_path,
     verbose,
+    refresh_agents,
+    days,
 ):
     """Twilio Recording Retrieval Tool.
 
@@ -96,6 +101,22 @@ def main(
     """
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+
+    # ---- Refresh agents mode ----
+    if refresh_agents:
+        click.echo(f"\n  Scanning Twilio for agents (last {days} days)...")
+        try:
+            twilio = TwilioClient()
+        except ValueError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        agents_list = discover_agents(twilio, days=days)
+        save_agents(agents_list)
+        click.echo(f"  Discovered {len(agents_list)} agents:")
+        for a in agents_list:
+            click.echo(f"    - {a}")
+        click.echo(f"\n  Saved to agents.json")
+        sys.exit(0)
 
     # ---- NLP: parse natural language query, merge with flags ----
     parsed = parse_query(query, date.today())
