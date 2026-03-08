@@ -90,6 +90,14 @@ def discover_agents(twilio: TwilioClient, days: int = 14) -> list[str]:
         if name:
             agents.add(name)
 
+    # Merge with DEFAULT_AGENTS so hardcoded agents never disappear
+    # (e.g. agents on leave who have no recent calls)
+    from .nlp import DEFAULT_AGENTS
+    for a in DEFAULT_AGENTS.split(","):
+        a = a.strip().lower()
+        if a:
+            agents.add(a)
+
     result = sorted(agents)
     logger.info("Discovered %d agents from %d days of calls: %s", len(result), days, result)
     return result
