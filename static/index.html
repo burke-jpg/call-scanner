@@ -104,8 +104,14 @@
     cursor:pointer;transition:all .15s;text-transform:capitalize;
   }
   .chip:hover{background:rgba(188,253,76,.12);border-color:rgba(188,253,76,.3)}
+  .chip.active{background:rgba(188,253,76,.2);border-color:#bcfd4c;box-shadow:0 0 6px rgba(188,253,76,.15)}
   .chip-client{border-color:rgba(226,232,240,.12);background:rgba(226,232,240,.03);color:#e2e8f0}
   .chip-client:hover{background:rgba(226,232,240,.08);border-color:rgba(226,232,240,.2)}
+  .chip-client.active{background:rgba(226,232,240,.12);border-color:#e2e8f0;box-shadow:0 0 6px rgba(226,232,240,.1)}
+  .qf-sep{width:1px;align-self:stretch;background:rgba(62,165,195,.15);margin:0 4px}
+  .sel-summary{font-size:.75rem;color:#8b92a8;margin-bottom:8px;display:none}
+  .sel-summary span{color:#3ea5c3;font-weight:600}
+  .sel-summary .clear-sel{color:#f87171;cursor:pointer;margin-left:8px;text-decoration:underline}
   .empty{text-align:center;padding:40px;color:#555d70}
   .spinner{display:none;text-align:center;padding:30px;color:#8b92a8}
   .spinner.active{display:block}
@@ -135,14 +141,17 @@
   </div>
 
   <div class="quick-filters">
-    <button class="qf" onclick="qf('today')">Today</button>
-    <button class="qf" onclick="qf('yesterday')">Yesterday</button>
-    <button class="qf" onclick="qf('this week')">This Week</button>
-    <button class="qf" onclick="qf('last 10 calls')">Last 10</button>
-    <button class="qf" onclick="qf('last 20 calls')">Last 20</button>
-    <button class="qf" onclick="qf('inbound today')">Inbound</button>
-    <button class="qf" onclick="qf('outbound today')">Outbound</button>
+    <button class="qf qf-time" data-value="today" onclick="toggleTime('today')">Today</button>
+    <button class="qf qf-time" data-value="yesterday" onclick="toggleTime('yesterday')">Yesterday</button>
+    <button class="qf qf-time" data-value="this week" onclick="toggleTime('this week')">This Week</button>
+    <span class="qf-sep"></span>
+    <button class="qf qf-dir" data-value="inbound" onclick="toggleDir('inbound')">Inbound</button>
+    <button class="qf qf-dir" data-value="outbound" onclick="toggleDir('outbound')">Outbound</button>
+    <span class="qf-sep"></span>
+    <button class="qf" onclick="qfLimit('last 10 calls')">Last 10</button>
+    <button class="qf" onclick="qfLimit('last 20 calls')">Last 20</button>
   </div>
+  <div class="sel-summary" id="selSummary"></div>
   <div class="chip-section" id="agentChips">
     <div class="chip-label">Agents</div>
     <div class="chip-row" id="agentRow"></div>
@@ -320,10 +329,76 @@ async function refreshAgents() {
   }
 }
 
-function qf(query) { $q.value = query; doSearch(); }
+/* ── Composable filter selection ── */
+const sel = { agent: '', client: '', time: '', dir: '' };
 
-function agentClick(name) { $q.value = name + ' today'; doSearch(); }
-function clientClick(name) { $q.value = name + ' today'; doSearch(); }
+function buildQuery() {
+  const parts = [];
+  if (sel.agent) parts.push(sel.agent);
+  if (sel.client) parts.push(sel.client);
+  if (sel.dir) parts.push(sel.dir);
+  if (sel.time) parts.push(sel.time);
+  return parts.join(' ');
+}
+
+function updateChipStates() {
+  document.querySelectorAll('.chip-agent').forEach(b => b.classList.toggle('active', b.dataset.name === sel.agent));
+  document.querySelectorAll('.chip-client').forEach(b => b.classList.toggle('active', b.dataset.name === sel.client));
+  document.querySelectorAll('.qf-time').forEach(b => b.classList.toggle('active', b.dataset.value === sel.time));
+  document.querySelectorAll('.qf-dir').forEach(b => b.classList.toggle('active', b.dataset.value === sel.dir));
+  // Selection summary
+  const $sum = document.getElementById('selSummary');
+  const q = buildQuery();
+  if (q) {
+    let parts = [];
+    if (sel.agent) parts.push('<span>' + esc(cap(sel.agent)) + '</span>');
+    if (sel.client) parts.push('<span>' + esc(sel.client) + '</span>');
+    if (sel.dir) parts.push('<span>' + sel.dir + '</span>');
+    if (sel.time) parts.push('<span>' + sel.time + '</span>');
+    $sum.innerHTML = 'Filter: ' + parts.join(' + ') + ' <a class="clear-sel" onclick="clearSel()">clear</a>';
+    $sum.style.display = 'block';
+  } else {
+    $sum.style.display = 'none';
+  }
+}
+
+function selSearch() {
+  const q = buildQuery();
+  if (q) { $q.value = q; doSearch(); }
+}
+
+function toggleAgent(name) {
+  sel.agent = sel.agent === name ? '' : name;
+  updateChipStates(); selSearch();
+}
+function toggleClient(name) {
+  sel.client = sel.client === name ? '' : name;
+  updateChipStates(); selSearch();
+}
+function toggleTime(t) {
+  sel.time = sel.time === t ? '' : t;
+  updateChipStates(); selSearch();
+}
+function toggleDir(d) {
+  sel.dir = sel.dir === d ? '' : d;
+  updateChipStates(); selSearch();
+}
+function qfLimit(query) {
+  sel.agent = ''; sel.client = ''; sel.time = ''; sel.dir = '';
+  updateChipStates();
+  $q.value = query; doSearch();
+}
+function clearSel() {
+  sel.agent = ''; sel.client = ''; sel.time = ''; sel.dir = '';
+  updateChipStates();
+  $q.value = '';
+}
+
+// Clear chip selections when user types manually
+$q.addEventListener('input', () => {
+  sel.agent = ''; sel.client = ''; sel.time = ''; sel.dir = '';
+  updateChipStates();
+});
 
 async function loadChips() {
   try {
@@ -335,14 +410,15 @@ async function loadChips() {
     const agRow = document.getElementById('agentRow');
     if (agData.agents && agData.agents.length) {
       agRow.innerHTML = agData.agents.map(a =>
-        '<button class="chip" onclick="agentClick(\'' + esc(a) + '\')">' + esc(cap(a)) + '</button>'
+        '<button class="chip chip-agent" data-name="' + esc(a) + '" onclick="toggleAgent(\'' + esc(a) + '\')">' + esc(cap(a)) + '</button>'
       ).join('');
     }
     const clRow = document.getElementById('clientRow');
     if (clData.clients && clData.clients.length) {
-      clRow.innerHTML = clData.clients.map(c =>
-        '<button class="chip chip-client" onclick="clientClick(\'' + esc(c).replace(/'/g,"\\&apos;") + '\')">' + esc(c) + '</button>'
-      ).join('');
+      clRow.innerHTML = clData.clients.map(c => {
+        const safe = esc(c).replace(/'/g,"&#39;");
+        return '<button class="chip chip-client" data-name="' + esc(c) + '" onclick="toggleClient(\'' + safe + '\')">' + esc(c) + '</button>';
+      }).join('');
       document.getElementById('clientChips').style.display = '';
     }
   } catch(e) { /* silent — chips are optional */ }
