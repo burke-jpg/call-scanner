@@ -235,6 +235,41 @@ def refresh_agents():
     })
 
 
+@app.route("/api/health")
+def health():
+    """Diagnostic: check Twilio connectivity and env vars."""
+    import time
+    import traceback
+
+    sid = os.getenv("TWILIO_ACCOUNT_SID", "")
+    tok = os.getenv("TWILIO_AUTH_TOKEN", "")
+    info = {
+        "sid_set": bool(sid),
+        "token_set": bool(tok),
+        "server_date": date.today().isoformat(),
+    }
+    try:
+        twilio = get_twilio()
+        # Direct SDK call with limit=1 — bypasses get_calls() exception swallowing
+        t0 = time.time()
+        direct = twilio.client.calls.list(limit=1)
+        info["direct_ok"] = True
+        info["direct_count"] = len(direct)
+        info["direct_ms"] = int((time.time() - t0) * 1000)
+
+        # Now test get_calls() for today
+        t1 = time.time()
+        today = date.today().isoformat()
+        raw = twilio.get_calls(date_from=today, date_to=today)
+        info["get_calls_count"] = len(raw)
+        info["get_calls_ms"] = int((time.time() - t1) * 1000)
+    except Exception as e:
+        info["direct_ok"] = False
+        info["error"] = str(e)
+        info["traceback"] = traceback.format_exc()[-500:]
+    return jsonify(info)
+
+
 @app.route("/api/download-all", methods=["POST"])
 def download_all():
     """Download multiple recordings as a ZIP file."""
